@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 use super::conv;
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -179,16 +180,27 @@ impl crate::CommandEncoder for super::CommandEncoder {
         self.temp.clear();
         self.free
             .extend(cmd_bufs.into_iter().map(|cmd_buf| cmd_buf.raw));
+        // enzUI: a discarded buffer is still recording, which
+        // `vkBeginCommandBuffer` may not reset implicitly.
+        for &raw in &self.discarded {
+            let _ = unsafe {
+                self.device
+                    .raw
+                    .reset_command_buffer(raw, vk::CommandBufferResetFlags::empty())
+            };
+        }
         self.free.append(&mut self.discarded);
         // Delete framebuffers from the framebuffer cache
         for (_, framebuffer) in self.framebuffers.drain() {
             unsafe { self.device.raw.destroy_framebuffer(framebuffer, None) };
         }
-        let _ = unsafe {
-            self.device
-                .raw
-                .reset_command_pool(self.raw, vk::CommandPoolResetFlags::default())
-        };
+        // enzUI: no `vkResetCommandPool`. Resetting the pool resets every
+        // buffer it ever allocated (at least `ALLOCATION_GRANULARITY`), and
+        // Mesa's ANV pays for each, while an encoder records two or three.
+        // The pool is created with `RESET_COMMAND_BUFFER`, so
+        // `vkBeginCommandBuffer` resets a buffer implicitly when
+        // `begin_encoding` reuses it; buffers reach `free` only after their
+        // submission completed, so none is pending.
     }
 
     unsafe fn transition_buffers<'a, T>(&mut self, barriers: T)

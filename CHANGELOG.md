@@ -42,6 +42,10 @@ Bottom level categories:
 
 ## Unreleased
 
+### enzUI fork
+
+- Avoid whole-pool Vulkan command-buffer resets when reusing completed buffers.
+
 ## v29.0.4 (2026-07-01)
 
 ### New Features

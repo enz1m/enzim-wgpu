@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 use alloc::{borrow::ToOwned as _, collections::BTreeMap, ffi::CString, sync::Arc, vec::Vec};
 use core::{
     ffi::CStr,
@@ -1249,7 +1250,12 @@ impl crate::Device for super::Device {
     ) -> Result<super::CommandEncoder, crate::DeviceError> {
         let vk_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(desc.queue.family_index)
-            .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+            // enzUI: buffers are reset one by one as they are begun again; see
+            // `CommandEncoder::reset_all`.
+            .flags(
+                vk::CommandPoolCreateFlags::TRANSIENT
+                    | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+            );
 
         let raw = unsafe {
             self.shared

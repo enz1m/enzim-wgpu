@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 //! Vulkan Surface and Swapchain implementation using native Vulkan surfaces.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
@@ -17,6 +18,12 @@ pub(crate) struct NativeSurface {
     raw: vk::SurfaceKHR,
     functor: khr::surface::Instance,
     instance: Arc<InstanceShared>,
+    /// enzUI: the capabilities last read for an adapter, kept while the
+    /// surface's extent follows its swapchain (Wayland). Each query costs
+    /// Mesa's Wayland WSI a round trip to the compositor per call, and wgpu
+    /// asks on every configure, so a window resizing each frame waited on
+    /// the compositor nine times a frame.
+    capabilities: Mutex<Option<(vk::PhysicalDevice, crate::SurfaceCapabilities)>>,
 }
 
 impl NativeSurface {
@@ -26,6 +33,7 @@ impl NativeSurface {
             raw,
             functor,
             instance: Arc::clone(&instance.shared),
+            capabilities: Mutex::new(None),
         }
     }
 
@@ -48,6 +56,39 @@ impl Surface for NativeSurface {
         if !adapter.private_caps.can_present {
             return None;
         }
+        if let Some((device, capabilities)) = &*self.capabilities.lock() {
+            if *device == adapter.raw {
+                return Some(capabilities.clone());
+            }
+        }
+        let capabilities = self.query_capabilities(adapter)?;
+        // An extent the window gives (X11, Windows) changes as it resizes.
+        *self.capabilities.lock() = capabilities
+            .current_extent
+            .is_none()
+            .then(|| (adapter.raw, capabilities.clone()));
+        Some(capabilities)
+    }
+
+    unsafe fn create_swapchain(
+        &self,
+        device: &crate::vulkan::Device,
+        config: &crate::SurfaceConfiguration,
+        provided_old_swapchain: Option<Box<dyn Swapchain>>,
+    ) -> Result<Box<dyn Swapchain>, crate::SurfaceError> {
+        unsafe { self.create_native_swapchain(device, config, provided_old_swapchain) }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl NativeSurface {
+    fn query_capabilities(
+        &self,
+        adapter: &crate::vulkan::Adapter,
+    ) -> Option<crate::SurfaceCapabilities> {
         let queue_family_index = 0; //TODO
         {
             profiling::scope!("vkGetPhysicalDeviceSurfaceSupportKHR");
@@ -151,7 +192,7 @@ impl Surface for NativeSurface {
         })
     }
 
-    unsafe fn create_swapchain(
+    unsafe fn create_native_swapchain(
         &self,
         device: &crate::vulkan::Device,
         config: &crate::SurfaceConfiguration,
@@ -274,10 +315,6 @@ impl Surface for NativeSurface {
             present_semaphores,
             next_present_time: None,
         }))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

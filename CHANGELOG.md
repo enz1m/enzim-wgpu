@@ -45,6 +45,7 @@ Bottom level categories:
 ### enzUI fork
 
 - Avoid whole-pool Vulkan command-buffer resets when reusing completed buffers.
+- Cache capabilities for Vulkan surfaces whose extent follows the swapchain.
 
 ## v29.0.4 (2026-07-01)
 

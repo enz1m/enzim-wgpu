@@ -64,8 +64,8 @@ edition = "2021"
 rust-version = "1.93"
 keywords = ["graphics"]
 license = "MIT OR Apache-2.0"
-homepage = "https://wgpu.rs/"
-repository = "https://github.com/gfx-rs/wgpu"
+homepage = "https://github.com/enz1m/enzim-wgpu"
+repository = "https://github.com/enz1m/enzim-wgpu"
 version = "29.0.4"
 authors = ["gfx-rs developers"]
 

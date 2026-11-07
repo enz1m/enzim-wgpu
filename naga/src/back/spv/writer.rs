@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 use alloc::{format, string::String, vec, vec::Vec};
 
 use arrayvec::ArrayVec;
@@ -2074,6 +2075,7 @@ impl Writer {
         &mut self,
         module: &crate::Module,
         handle: Handle<crate::Type>,
+        explicit_layout: bool,
     ) -> Result<Word, Error> {
         let ty = &module.types[handle];
         // If it's a type that needs SPIR-V capabilities, request them now.
@@ -2105,7 +2107,9 @@ impl Writer {
             let id = self.id_gen.next();
             let instruction = match ty.inner {
                 crate::TypeInner::Array { base, size, stride } => {
-                    self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    if explicit_layout {
+                        self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    }
 
                     let type_id = self.get_handle_type_id(base);
                     match size.resolve(module.to_ctx())? {
@@ -2148,7 +2152,13 @@ impl Writer {
                             }
                             _ => (),
                         }
-                        self.decorate_struct_member(id, index, member, &module.types)?;
+                        self.decorate_struct_member(
+                            id,
+                            index,
+                            member,
+                            &module.types,
+                            explicit_layout,
+                        )?;
                         let member_id = self.get_handle_type_id(member.ty);
                         member_ids.push(member_id);
                     }
@@ -2394,6 +2404,7 @@ impl Writer {
                                                 next_index as usize,
                                                 member,
                                                 &module.types,
+                                                true,
                                             )?;
                                             self.get_handle_type_id(member.ty)
                                         }
@@ -3383,7 +3394,13 @@ impl Writer {
                         binding: None,
                         offset: 0,
                     };
-                    self.decorate_struct_member(wrapper_type_id, 0, &member, &ir_module.types)?;
+                    self.decorate_struct_member(
+                        wrapper_type_id,
+                        0,
+                        &member,
+                        &ir_module.types,
+                        true,
+                    )?;
 
                     Instruction::type_struct(wrapper_type_id, &[inner_type_id])
                         .to_words(&mut self.logical_layout.declarations);
@@ -3459,15 +3476,9 @@ impl Writer {
         index: usize,
         member: &crate::StructMember,
         arena: &UniqueArena<crate::Type>,
+        explicit_layout: bool,
     ) -> Result<(), Error> {
         use spirv::Decoration;
-
-        self.annotations.push(Instruction::member_decorate(
-            struct_id,
-            index as u32,
-            Decoration::Offset,
-            &[member.offset],
-        ));
 
         if self.flags.contains(WriterFlags::DEBUG) {
             if let Some(ref name) = member.name {
@@ -3475,6 +3486,16 @@ impl Writer {
                     .push(Instruction::member_name(struct_id, index as u32, name));
             }
         }
+
+        if !explicit_layout {
+            return Ok(());
+        }
+        self.annotations.push(Instruction::member_decorate(
+            struct_id,
+            index as u32,
+            Decoration::Offset,
+            &[member.offset],
+        ));
 
         // Matrices and (potentially nested) arrays of matrices both require decorations,
         // so "see through" any arrays to determine if they're needed.
@@ -3625,9 +3646,38 @@ impl Writer {
             }
         }
 
-        // write all types
+        let mut memory_types = crate::FastHashSet::default();
+        let mut pending: Vec<_> = ir_module
+            .global_variables
+            .iter()
+            .filter(|(_, variable)| {
+                matches!(
+                    variable.space,
+                    crate::AddressSpace::Uniform
+                        | crate::AddressSpace::Storage { .. }
+                        | crate::AddressSpace::Immediate
+                )
+            })
+            .map(|(_, variable)| variable.ty)
+            .collect();
+        while let Some(handle) = pending.pop() {
+            if !memory_types.insert(handle) {
+                continue;
+            }
+            match &ir_module.types[handle].inner {
+                crate::TypeInner::Struct { members, .. } => {
+                    pending.extend(members.iter().map(|member| member.ty));
+                }
+                crate::TypeInner::Array { base, .. }
+                | crate::TypeInner::BindingArray { base, .. }
+                | crate::TypeInner::Pointer { base, .. } => pending.push(*base),
+                _ => {}
+            }
+        }
+
+        // Only types reachable from memory interfaces need explicit composite layouts.
         for (handle, _) in ir_module.types.iter() {
-            self.write_type_declaration_arena(ir_module, handle)?;
+            self.write_type_declaration_arena(ir_module, handle, memory_types.contains(&handle))?;
         }
 
         // write std140 layout compatible types required by uniforms

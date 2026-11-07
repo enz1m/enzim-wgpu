@@ -46,6 +46,7 @@ Bottom level categories:
 
 - Avoid whole-pool Vulkan command-buffer resets when reusing completed buffers.
 - Cache capabilities for Vulkan surfaces whose extent follows the swapchain.
+- Add `wgpu_hal::vulkan::set_present_damage` for incremental presentation hints.
 
 ## v29.0.4 (2026-07-01)
 

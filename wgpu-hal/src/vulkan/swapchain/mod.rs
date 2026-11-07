@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 use alloc::boxed::Box;
 use core::{any::Any, fmt::Debug, time::Duration};
 
@@ -6,6 +7,28 @@ use crate::vulkan::{semaphore_list::SemaphoreType, DeviceShared};
 pub(super) use native::*;
 
 mod native;
+
+std::thread_local! {
+    /// enzUI: the rectangles the next present on this thread changed.
+    static PRESENT_DAMAGE: core::cell::RefCell<Option<alloc::vec::Vec<[u32; 4]>>> =
+        const { core::cell::RefCell::new(None) };
+}
+
+/// enzUI: names what the next present on this thread changed, as
+/// `[x, y, width, height]` rectangles in the image's pixels, and `None` for
+/// the whole image. The compositor is then told only those were damaged
+/// (`VK_KHR_incremental_present`), so it need not repaint, or recomposite
+/// effects over, the rest. Each image must still hold the whole frame: the
+/// rectangles only say where it differs from the frame presented before.
+/// Without the extension the hint is dropped and the whole image is damaged.
+pub fn set_present_damage(damage: Option<alloc::vec::Vec<[u32; 4]>>) {
+    PRESENT_DAMAGE.with(|slot| *slot.borrow_mut() = damage);
+}
+
+/// The damage [`set_present_damage`] left for this present, consumed.
+pub(super) fn take_present_damage() -> Option<alloc::vec::Vec<[u32; 4]>> {
+    PRESENT_DAMAGE.with(|slot| slot.borrow_mut().take())
+}
 
 pub(super) trait Surface: Send + Sync + 'static {
     /// Deletes the surface and associated resources.

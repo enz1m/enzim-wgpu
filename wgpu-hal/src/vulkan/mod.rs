@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 /*!
 # Vulkan API internals.
 
@@ -35,6 +36,7 @@ mod semaphore_list;
 mod swapchain;
 
 pub use adapter::PhysicalDeviceFeatures;
+pub use swapchain::set_present_damage;
 
 use alloc::{boxed::Box, ffi::CString, sync::Arc, vec::Vec};
 use core::{

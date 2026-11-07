@@ -613,6 +613,48 @@ impl Swapchain for NativeSwapchain {
             vk_info
         };
 
+        // enzUI: what changed since the last present, when the device can
+        // say so. An empty list still names one pixel: an empty region would
+        // read as the whole image.
+        let damage = super::take_present_damage().filter(|_| {
+            self.device
+                .enabled_extensions
+                .contains(&khr::incremental_present::NAME)
+        });
+        let rectangles: Vec<vk::RectLayerKHR> = damage
+            .iter()
+            .flatten()
+            .map(|&[x, y, width, height]| vk::RectLayerKHR {
+                offset: vk::Offset2D {
+                    x: x as i32,
+                    y: y as i32,
+                },
+                extent: vk::Extent2D { width, height },
+                layer: 0,
+            })
+            .chain(
+                damage
+                    .as_ref()
+                    .filter(|rects| rects.is_empty())
+                    .map(|_| vk::RectLayerKHR {
+                        offset: vk::Offset2D::default(),
+                        extent: vk::Extent2D {
+                            width: 1,
+                            height: 1,
+                        },
+                        layer: 0,
+                    }),
+            )
+            .collect();
+        let regions = [vk::PresentRegionKHR::default().rectangles(&rectangles)];
+        let mut present_regions = vk::PresentRegionsKHR::default().regions(&regions);
+        let vk_info = if damage.is_some() {
+            // SAFETY: the device enabled VK_KHR_incremental_present, checked above.
+            vk_info.push_next(&mut present_regions)
+        } else {
+            vk_info
+        };
+
         let suboptimal = {
             profiling::scope!("vkQueuePresentKHR");
             unsafe { self.functor.queue_present(queue.raw, &vk_info) }.map_err(|error| {

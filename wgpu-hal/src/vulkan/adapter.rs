@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md for the changes and upstream provenance.
 use alloc::{borrow::ToOwned as _, boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{ffi::CStr, marker::PhantomData};
 
@@ -1176,6 +1177,10 @@ impl PhysicalDeviceProperties {
 
         // Require `VK_KHR_swapchain`
         extensions.push(khr::swapchain::NAME);
+
+        // enzUI: `VK_KHR_incremental_present`, if available, so a present can
+        // name the parts of the image that changed (see `set_present_damage`).
+        extensions.push(khr::incremental_present::NAME);
 
         if self.device_api_version < vk::API_VERSION_1_1 {
             // Require `VK_KHR_maintenance1`

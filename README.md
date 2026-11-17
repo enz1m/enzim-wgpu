@@ -3,7 +3,7 @@
 The wgpu graphics stack maintained for enzUI and enzimOS.
 
 An independently maintained fork of [gfx-rs/wgpu](https://github.com/gfx-rs/wgpu),
-based on wgpu **29.0.4**. This repository preserves upstream Git history,
+based on wgpu **30.0.2**. This repository preserves upstream Git history,
 crate names, and the **MIT OR Apache-2.0** licensing. It is not an official
 gfx-rs release.
 

@@ -3,7 +3,8 @@
 ## Upstream
 
 - Project: [gfx-rs/wgpu](https://github.com/gfx-rs/wgpu).
-- Base: `e99f5305ded96ff7006f0714d043a7f735bd45c2` (wgpu 29.0.4).
+- Base: `e99f5305ded96ff7006f0714d043a7f735bd45c2` (wgpu 29.0.4), with the
+  `v30.0.2` release tag merged in; upstream commits keep their history.
 - Repository: [enz1m/enzim-wgpu](https://github.com/enz1m/enzim-wgpu).
 - Development branch: `enzim`.
 - Fork author/committer: Bernard (`enz1m`).
@@ -13,6 +14,8 @@
 The `enzim` branch starts at the exact upstream commit recorded in the nine
 crate archives consumed by enzUI. Upstream ancestry is retained unchanged.
 Each of the four fork patches is recorded in an independent, signed commit.
+Upstream releases are merged in (most recently `v30.0.2`), never rebased,
+so published history is not rewritten.
 
 ## Imported changes
 

@@ -1,4 +1,4 @@
-#![allow(clippy::arc_with_non_send_sync)] // False positive on wasm
+#![allow(clippy::arc_with_non_send_sync, reason = "False positive on wasm")]
 #![warn(clippy::allow_attributes)]
 
 pub mod framework;
@@ -19,6 +19,7 @@ pub mod mipmap;
 pub mod msaa_line;
 pub mod multiple_render_targets;
 pub mod multiview;
+pub mod ray_aabb_compute;
 pub mod ray_cube_compute;
 pub mod ray_cube_fragment;
 pub mod ray_cube_normals;
@@ -26,6 +27,7 @@ pub mod ray_scene;
 pub mod ray_shadows;
 pub mod ray_traced_triangle;
 pub mod render_to_texture;
+pub mod render_with_compute;
 pub mod repeated_compute;
 pub mod shadow;
 pub mod skybox;
@@ -40,7 +42,7 @@ pub mod water;
 #[cfg(test)]
 fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
     #[cfg_attr(
-        target_arch = "wasm32",
+        wasm_test,
         expect(unused_mut, reason = "non-wasm32 needs this mutable")
     )]
     let mut test_list = vec![
@@ -55,6 +57,7 @@ fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
         mipmap::TEST_QUERY,
         msaa_line::TEST,
         multiple_render_targets::TEST,
+        ray_aabb_compute::TEST,
         ray_cube_compute::TEST,
         ray_cube_fragment::TEST,
         ray_cube_normals::TEST,
@@ -78,7 +81,7 @@ fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
         water::TEST,
     ];
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(wasm_test))]
     {
         test_list.push(big_compute_buffers::tests::TWO_BUFFERS);
         test_list.push(cooperative_matrix::tests::COOPERATIVE_MATRIX);

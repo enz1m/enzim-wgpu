@@ -33,10 +33,12 @@ async fn run_test(ctx: TestingContext, use_many_writes: bool) {
     let device = ctx.device;
     let queue = ctx.queue;
 
+    // Deliberately distinct in every dimension so that an axis swap (width vs.
+    // height vs. depth) in the copy or the readback would be caught.
     let size = wgpu::Extent3d {
         width: 4,
-        height: 4,
-        depth_or_array_layers: 4,
+        height: 5,
+        depth_or_array_layers: 6,
     };
     let texture = {
         device.create_texture(&wgpu::TextureDescriptor {
@@ -286,7 +288,7 @@ impl TextureCopyParameters {
         // by copying it one row at a time.
         let mut texel_vector: Vec<C> = Vec::new();
         {
-            let mapped: &[u8] = &buffer.slice(..).get_mapped_range();
+            let mapped: &[u8] = &buffer.slice(..).get_mapped_range().unwrap();
             for row in 0..self.row_count() {
                 let byte_start_of_row = (self.padded_bytes_per_row()) as usize * row;
                 texel_vector.extend(bytemuck::cast_slice::<u8, C>(

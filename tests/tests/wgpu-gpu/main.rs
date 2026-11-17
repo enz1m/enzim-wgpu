@@ -5,23 +5,28 @@ mod regression {
     pub mod issue_4122;
     pub mod issue_4485;
     pub mod issue_4514;
+    pub mod issue_5231_9343;
     pub mod issue_5553;
     pub mod issue_6317;
     pub mod issue_6467;
     pub mod issue_6827;
+    pub mod issue_9115;
 }
 
+mod adapter;
 mod bgra8unorm_storage;
 mod bind_group_layout_dedup;
 mod bind_groups;
 mod binding_array;
 mod buffer;
 mod buffer_copy;
+mod buffer_resource_limits;
 mod buffer_usages;
 mod clear_texture;
 mod clip_distances;
 mod cloneable_types;
 mod compute_pass_ownership;
+mod compute_pass_transition_resources;
 mod create_surface_error;
 mod device;
 mod dispatch_workgroups_indirect;
@@ -56,6 +61,7 @@ mod queue_transfer;
 mod ray_tracing;
 mod render_pass_ownership;
 mod render_target;
+mod resolve_query_set_init;
 mod resource_descriptor_accessor;
 mod resource_error;
 mod samplers;
@@ -78,12 +84,14 @@ mod vertex_formats;
 mod vertex_indices;
 mod vertex_state;
 mod write_texture;
-mod zero_init_texture_after_discard;
+mod zero_init;
 
 fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
     let mut tests = Vec::new();
 
+    adapter::all_tests(&mut tests);
     bgra8unorm_storage::all_tests(&mut tests);
+    buffer_resource_limits::all_tests(&mut tests);
     bind_group_layout_dedup::all_tests(&mut tests);
     bind_groups::all_tests(&mut tests);
     binding_array::all_tests(&mut tests);
@@ -94,6 +102,10 @@ fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
     clip_distances::all_tests(&mut tests);
     cloneable_types::all_tests(&mut tests);
     compute_pass_ownership::all_tests(&mut tests);
+
+    #[cfg(wasm_test)]
+    create_surface_error::all_tests(&mut tests);
+
     device::all_tests(&mut tests);
     dispatch_workgroups_indirect::all_tests(&mut tests);
     draw_index::all_tests(&mut tests);
@@ -121,6 +133,7 @@ fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
     primitive_index::all_tests(&mut tests);
     immediates::all_tests(&mut tests);
     query_set::all_tests(&mut tests);
+    resolve_query_set_init::all_tests(&mut tests);
     queue_transfer::all_tests(&mut tests);
     ray_tracing::all_tests(&mut tests);
     regression::issue_3349::all_tests(&mut tests);
@@ -129,10 +142,12 @@ fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
     regression::issue_4122::all_tests(&mut tests);
     regression::issue_4485::all_tests(&mut tests);
     regression::issue_4514::all_tests(&mut tests);
+    regression::issue_5231_9343::all_tests(&mut tests);
     regression::issue_5553::all_tests(&mut tests);
     regression::issue_6317::all_tests(&mut tests);
     regression::issue_6467::all_tests(&mut tests);
     regression::issue_6827::all_tests(&mut tests);
+    regression::issue_9115::all_tests(&mut tests);
     render_pass_ownership::all_tests(&mut tests);
     render_target::all_tests(&mut tests);
     resource_descriptor_accessor::all_tests(&mut tests);
@@ -153,11 +168,12 @@ fn all_tests() -> Vec<wgpu_test::GpuTestInitializer> {
     transfer::all_tests(&mut tests);
     transient::all_tests(&mut tests);
     transition_resources::all_tests(&mut tests);
+    compute_pass_transition_resources::all_tests(&mut tests);
     vertex_formats::all_tests(&mut tests);
     vertex_indices::all_tests(&mut tests);
     vertex_state::all_tests(&mut tests);
     write_texture::all_tests(&mut tests);
-    zero_init_texture_after_discard::all_tests(&mut tests);
+    zero_init::all_tests(&mut tests);
     naga_capabilities::all_tests(&mut tests);
 
     tests

@@ -11,11 +11,11 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
-
 [features]
 
 [dependencies]
 naga = { workspace = true, features = [
+    "fs",
     "serialize",
     "deserialize",
     "glsl-in",
@@ -34,3 +34,6 @@ toml.workspace = true
 bitflags.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+
+[lints]
+workspace = true

@@ -327,8 +327,13 @@ fn push_job_for_each_hlsl_config_item(
         vertex,
         fragment,
         compute,
+        task,
+        mesh,
     } = hlsl_snapshots::Config::from_path(path.with_extension("ron"))?;
-    for shader in [vertex, fragment, compute].into_iter().flatten() {
+    for shader in [vertex, fragment, compute, task, mesh]
+        .into_iter()
+        .flatten()
+    {
         // Let each job closure stand on its own.
         let mut validator = validator.clone();
         let path = path.to_owned();
@@ -345,19 +350,25 @@ fn validate_hlsl_with_dxc(
 ) -> anyhow::Result<()> {
     // Reference:
     // <https://github.com/microsoft/DirectXShaderCompiler/blob/6ee4074a4b43fa23bf5ad27e4f6cafc6b835e437/tools/clang/docs/UsingDxc.rst>.
-    validate_hlsl(
-        file,
-        dxc,
-        config_item,
-        &[
-            "-Wno-parentheses-equality",
-            "-Zi",
-            "-Qembed_debug",
-            "-Od",
-            "-HV",
-            "2018",
-        ],
-    )
+
+    // Parse shader model version (e.g. "cs_6_2" -> major=6, minor=2)
+    let mut parts = config_item.target_profile.split('_').skip(1);
+    let major: u8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let minor: u8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let mut args = vec![
+        "-Wno-parentheses-equality",
+        "-Zi",
+        "-Qembed_debug",
+        "-Od",
+        "-HV",
+        "2018",
+    ];
+    // -enable-16bit-types requires SM 6.2+
+    if major > 6 || (major == 6 && minor >= 2) {
+        args.push("-enable-16bit-types");
+    }
+    validate_hlsl(file, dxc, config_item, &args)
 }
 
 fn validate_hlsl_with_fxc(

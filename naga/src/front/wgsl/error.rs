@@ -46,6 +46,10 @@ impl ParseError {
         &self.message
     }
 
+    pub fn notes(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
+        self.notes.iter().map(|note| note.as_str())
+    }
+
     fn diagnostic(&self) -> Diagnostic<()> {
         let diagnostic = Diagnostic::error()
             .with_message(self.message.to_string())
@@ -102,11 +106,10 @@ impl ParseError {
     }
 
     /// Emits a summary of the error to a string.
-    pub fn emit_to_string_with_path<P>(&self, source: &str, path: P) -> String
-    where
-        P: AsRef<std::path::Path>,
-    {
-        let path = path.as_ref().display().to_string();
+    ///
+    /// `path` gives the filename to attribute the error to in the
+    /// output; this function does not try to access the file.
+    pub fn emit_to_string_with_path(&self, source: &str, path: &str) -> String {
         let files = SimpleFile::new(path, replace_control_chars(source));
         let config = term::Config::default();
 
@@ -130,6 +133,36 @@ impl core::fmt::Display for ParseError {
 }
 
 impl core::error::Error for ParseError {}
+
+#[cfg(test)]
+mod parse_error_tests {
+
+    #[test]
+    fn test_notes() {
+        use crate::front::wgsl::parse_str;
+        // wgsl code and notes taken from: `cross_vec2()` in naga/tests/naga/wgsl_errors.rs
+        assert_eq!(
+            parse_str(
+                r#"
+            fn x() -> f32 {
+                return cross(vec2(0., 1.), vec2(0., 1.));
+            }
+        "#,
+            )
+            .unwrap_err()
+            .notes()
+            .collect::<super::Vec<_>>(),
+            [
+                "`cross` accepts the following types for argument #1:",
+                "allowed type: vec3<{AbstractFloat}>",
+                "allowed type: vec3<f32>",
+                "allowed type: vec3<f16>",
+                "allowed type: vec3<f64>"
+            ]
+            .to_vec()
+        );
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ExpectedToken<'a> {
@@ -220,6 +253,7 @@ pub(crate) enum Error<'a> {
     UnknownLanguageExtension(Span, &'a str),
     UnknownDiagnosticRuleName(Span),
     SizeAttributeTooLow(Span, u32),
+    SizeAttributeRequiresFixedFootprint(Span),
     AlignAttributeTooLow(Span, Alignment),
     NonPowerOfTwoAlignAttribute(Span),
     InconsistentBinding(Span),
@@ -235,6 +269,7 @@ pub(crate) enum Error<'a> {
     InvalidAddrOfOperand(Span),
     InvalidAtomicPointer(Span),
     InvalidAtomicOperandType(Span),
+    InvalidAtomicAccess(Span),
     InvalidRayQueryPointer(Span),
     NotPointer(Span),
     NotReference(&'static str, Span),
@@ -361,6 +396,7 @@ pub(crate) enum Error<'a> {
     FunctionReturnsVoid(Span),
     FunctionMustUseUnused(Span),
     FunctionMustUseReturnsVoid(Span, Span),
+    FunctionMustUseOnNonFunction(Span),
     InvalidWorkGroupUniformLoad(Span),
     Internal(&'static str),
     ExpectedConstExprConcreteIntegerScalar(Span),
@@ -441,6 +477,7 @@ pub(crate) enum Error<'a> {
     },
     UnexpectedExprForTypeExpression(Span),
     MissingIncomingPayload(Span),
+    UnterminatedBlockComment(Span),
 }
 
 impl From<ConflictingDiagnosticRuleError> for Error<'_> {
@@ -488,6 +525,9 @@ pub(crate) struct ConcretizationFailedError {
 impl<'a> Error<'a> {
     #[cold]
     #[inline(never)]
+    // This function is not recursive, so it can exceed our conservatively-set
+    // `stack-frame-limit` without causing problems.
+    #[allow(clippy::large_stack_frames)]
     pub(crate) fn as_parse_error(&self, source: &'a str) -> ParseError {
         match *self {
             Error::Unexpected(unexpected_span, expected) => {
@@ -515,6 +555,7 @@ impl<'a> Error<'a> {
                         Token::DocComment(s) => format!("doc comment ('{s}')"),
                         Token::ModuleDocComment(s) => format!("module doc comment ('{s}')"),
                         Token::End => "end".to_string(),
+                        Token::UnterminatedBlockComment(s) => format!("unterminated doc comment ('{s}'")
                     },
                     ExpectedToken::Identifier => "identifier".to_string(),
                     ExpectedToken::LhsExpression => "LHS expression (identifier component_or_swizzle_specifier?, (`lhs_expression`) component_or_swizzle_specifier?, &`lhs_expression`, *`lhs_expression`)".to_string(),
@@ -753,6 +794,11 @@ impl<'a> Error<'a> {
                 labels: vec![(bad_span, format!("must be at least {min_size}").into())],
                 notes: vec![],
             },
+            Error::SizeAttributeRequiresFixedFootprint(bad_span) => ParseError {
+                message: "@size attribute requires a type with creation-fixed footprint".to_string(),
+                labels: vec![(bad_span, "type does not have creation-fixed footprint".into())],
+                notes: vec![],
+            },
             Error::AlignAttributeTooLow(bad_span, min_align) => ParseError {
                 message: format!("struct member alignment must be at least {min_align}"),
                 labels: vec![(bad_span, format!("must be at least {min_align}").into())],
@@ -822,6 +868,11 @@ impl<'a> Error<'a> {
             Error::InvalidAtomicOperandType(span) => ParseError {
                 message: "atomic operand type is inconsistent with the operation".to_string(),
                 labels: vec![(span, "atomic operand type is invalid".into())],
+                notes: vec![],
+            },
+            Error::InvalidAtomicAccess(span) => ParseError {
+                message: "atomic variables cannot be accessed directly; use atomic built-in functions".to_string(),
+                labels: vec![(span, "direct access to atomic variable is not allowed".into())],
                 notes: vec![],
             },
             Error::InvalidRayQueryPointer(span) => ParseError {
@@ -1062,6 +1113,13 @@ impl<'a> Error<'a> {
                 ],
                 notes: vec![
                     "declare a return type or remove the attribute".into(),
+                ],
+            },
+            Error::FunctionMustUseOnNonFunction(attr) => ParseError {
+                message: "attribute `@must_use` is only valid on function declarations".into(),
+                labels: vec![(attr, "".into())],
+                notes: vec![
+                    "place `@must_use` on a function declaration with a return type".into(),
                 ],
             },
             Error::InvalidWorkGroupUniformLoad(span) => ParseError {
@@ -1500,6 +1558,14 @@ impl<'a> Error<'a> {
                 )],
                 notes: vec![],
             },
+            Error::UnterminatedBlockComment(span) => ParseError {
+                message: "unterminated block comment".to_string(),
+                labels: vec![(
+                    span,
+                    "must be closed with `*/`".into(),
+                )],
+                notes: vec![],
+            }
         }
     }
 }

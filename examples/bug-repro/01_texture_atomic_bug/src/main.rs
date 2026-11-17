@@ -127,6 +127,7 @@ impl State {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width,
             height,
             present_mode: wgpu::PresentMode::AutoVsync,
@@ -274,7 +275,12 @@ impl State {
     fn render_frame(&mut self) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Suboptimal(_) | wgpu::CurrentSurfaceTexture::Outdated => {
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+                drop(texture);
+                self.surface.configure(&self.device, &self.surface_config);
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.surface_config);
                 return;
             }
@@ -335,6 +341,6 @@ impl State {
         }
 
         self.queue.submit([enc.finish()]);
-        frame.present();
+        self.queue.present(frame);
     }
 }

@@ -90,7 +90,6 @@ You **must**:
 ### `wgpu` feature
 
 - Using cooperative matrices requires enabling:
-
   - `Features::EXPERIMENTAL_COOPERATIVE_MATRIX`
 
 This feature may be restricted to certain backends and hardware.
@@ -132,7 +131,6 @@ Returns all cooperative matrix configurations supported by the adapter/backend.
 ### Structures
 
 - `CooperativeMatrixProperties`
-
   - `m_size: naga::CooperativeSize`
   - `n_size: naga::CooperativeSize`
   - `k_size: naga::CooperativeSize`
@@ -171,7 +169,6 @@ A cooperative matrix is a value type parameterized by:
 - tile size (M×N),
 - scalar element type `T`, and
 - role `R` indicating how the matrix participates in the multiply-accumulate:
-
   - `A`: left operand
   - `B`: right operand
   - `C`: accumulator / result
@@ -206,17 +203,14 @@ properties returned at runtime; shaders must not use arbitrary combinations.
 ### Roles and semantics
 
 - `A` role:
-
   - Treated as the left operand in the multiplication. Has shape M×K.
   - Participates as `A` in `A * B + C`.
 
 - `B` role:
-
   - Treated as the right operand in the multiplication. Has shape K×N.
   - Participates as `B` in `A * B + C`.
 
 - `C` role:
-
   - Treated as accumulator and result. Has shape M×N.
   - Participates as `C` in `A * B + C`.
 
@@ -227,31 +221,53 @@ These roles are part of the type; they are not interchangeable.
 WGSL provides built-in functions for operating on cooperative matrices. The exact spelling may
 change; the semantics are:
 
-#### `coopLoad`
+#### `coopLoad` / `coopLoadT`
 
-Collectively load a tile from memory into a cooperative matrix.
+Collectively load a tile from memory into a cooperative matrix. Two variants
+select the memory layout:
 
-```/dev/null/example.wgsl#L1-6
+- `coopLoad` — matrix is stored **column-major** in memory; `stride` is the
+  number of elements between adjacent columns.
+- `coopLoadT` — matrix is stored **row-major** in memory (i.e. transposed
+  relative to the canonical column-major layout used by `coopLoad`);
+  `stride` is the number of elements between adjacent rows. This is the
+  natural fit for C-style `ptr[i * num_cols + j]` storage.
+
+```/dev/null/example.wgsl#L1-10
 fn coopLoad<T, R>(
     ptr: ptr<STORAGE_CLASS, T>, // base pointer to scalar or vector elements
-    stride: u32                  // stride (in elements) between rows/columns
+    stride: u32                  // elements between adjacent columns
+) -> coop_matMxN<T, R>;
+
+fn coopLoadT<T, R>(
+    ptr: ptr<STORAGE_CLASS, T>, // base pointer to scalar or vector elements
+    stride: u32                  // elements between adjacent rows
 ) -> coop_matMxN<T, R>;
 ```
 
 - Loads an M×N tile (or M×K / K×N, depending on role and operation) from memory pointed to by `ptr`.
-- `stride` describes the layout in memory; it is usually the number of elements between adjacent rows.
-- All invocations in the cooperative group must call `coopLoad` in a converged fashion.
+- All invocations in the cooperative group must call the chosen variant in a converged fashion.
 - Memory address range must be valid and properly aligned for the scalar type.
 
 > Implementation note: Each lane contributes to filling the tile based on an implementation-defined mapping from
 > invocation/lane ID to sub-fragment of the matrix.
 
-#### `coopStore`
+#### `coopStore` / `coopStoreT`
 
-Collectively store a cooperative matrix tile back to memory.
+Collectively store a cooperative matrix tile back to memory. Variant
+selection mirrors the load builtins:
 
-```/dev/null/example.wgsl#L8-13
+- `coopStore` — writes **column-major**; `stride` between columns.
+- `coopStoreT` — writes **row-major**; `stride` between rows.
+
+```/dev/null/example.wgsl#L12-23
 fn coopStore<T, R>(
+    value: coop_matMxN<T, R>,
+    ptr: ptr<STORAGE_CLASS, T>,
+    stride: u32
+);
+
+fn coopStoreT<T, R>(
     value: coop_matMxN<T, R>,
     ptr: ptr<STORAGE_CLASS, T>,
     stride: u32
@@ -293,6 +309,8 @@ alias MatA = coop_mat8x8<f32, A>;
 alias MatB = coop_mat8x8<f32, B>;
 alias MatC = coop_mat8x8<f32, C>;
 
+// Assumes each tile is stored column-major in memory (the plain `coopLoad`
+// / `coopStore` form); use `coopLoadT` / `coopStoreT` for row-major storage.
 fn matmul_tile(
     ptr_a: ptr<storage, f32>,
     ptr_b: ptr<storage, f32>,
@@ -317,9 +335,8 @@ underlying scalar type semantics (e.g. IEEE-754 for floats).
 Cooperative matrix operations are **collective**:
 
 - All invocations in the relevant execution group must execute each cooperative operation in uniform control flow:
-
-  - Using `coopLoad`, `coopStore`, or `coopMultiplyAdd` in divergent control flow (e.g. some lanes taking
-    a branch, others not) is undefined behavior.
+  - Using `coopLoad` / `coopLoadT`, `coopStore` / `coopStoreT`, or `coopMultiplyAdd` in divergent control flow
+    (e.g. some lanes taking a branch, others not) is undefined behavior.
   - The exact execution group may be a workgroup, a SIMD-group / subgroup, or another backend-specific
     granularity; shaders must treat it abstractly.
 
@@ -330,7 +347,6 @@ Cooperative matrix operations are **collective**:
 For portable code:
 
 - Choose a workgroup size that is known to be supported efficiently on your target backends, for example:
-
   - `@workgroup_size(8, 8, 1)` to operate on an 8×8 tile, or
   - a multiple of the tile size where each subgroup handles a tile.
 
@@ -342,7 +358,7 @@ Example:
 enable wgpu_cooperative_matrix;
 
 struct Matrices {
-    // Row-major tiles for A, B, C.
+    // Row-major tiles for A, B, C — use the `…T` load/store variants.
     data: array<f32>,
 };
 
@@ -371,12 +387,12 @@ fn main(
     let base_b = &buf_b.data[tile_offset];
     let base_c = &buf_c.data[tile_offset];
 
-    let a: MatA = coopLoad<f32, A>(base_a, 8u);
-    let b: MatB = coopLoad<f32, B>(base_b, 8u);
-    let c: MatC = coopLoad<f32, C>(base_c, 8u);
+    let a: MatA = coopLoadT<f32, A>(base_a, 8u);
+    let b: MatB = coopLoadT<f32, B>(base_b, 8u);
+    let c: MatC = coopLoadT<f32, C>(base_c, 8u);
 
     let result: MatC = coopMultiplyAdd(a, b, c);
-    coopStore(result, base_c, 8u);
+    coopStoreT(result, base_c, 8u);
 }
 ```
 
@@ -399,11 +415,13 @@ The following are examples of **undefined behavior** (non-exhaustive):
 - Using a cooperative matrix type `(M, N, T, R)` not supported by
   `Adapter::cooperative_matrix_properties()`.
 - Mismatching sizes or roles in `coopMultiplyAdd` (e.g. incompatible M/N/K, or incorrect roles).
-- Executing `coopLoad`, `coopStore`, or `coopMultiplyAdd` in divergent control flow within the
-  cooperating execution group.
-- Providing invalid, misaligned, or out-of-bounds pointers to `coopLoad` / `coopStore`.
-- Overlapping `coopStore` targets in a way that creates data races or aliasing that the memory
-  model does not allow.
+- Executing `coopLoad` / `coopLoadT`, `coopStore` / `coopStoreT`, or `coopMultiplyAdd` in divergent
+  control flow within the cooperating execution group.
+- Providing invalid, misaligned, or out-of-bounds pointers to any of the load/store builtins.
+- Using a load/store variant (`coopLoad` vs `coopLoadT`, `coopStore` vs `coopStoreT`) whose memory
+  layout does not match how the tile is actually stored.
+- Overlapping `coopStore` / `coopStoreT` targets in a way that creates data races or aliasing that
+  the memory model does not allow.
 
 ---
 

@@ -61,6 +61,7 @@ impl State {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: self.surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             // Request compatibility with the sRGB-format texture view we‘re going to create later.
             view_formats: vec![self.surface_format.add_srgb_suffix()],
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
@@ -86,7 +87,12 @@ impl State {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => texture,
             wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => return,
-            wgpu::CurrentSurfaceTexture::Suboptimal(_) | wgpu::CurrentSurfaceTexture::Outdated => {
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+                drop(texture);
+                self.configure_surface();
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
                 self.configure_surface();
                 return;
             }
@@ -136,7 +142,7 @@ impl State {
         // Submit the command in the queue to execute
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
-        surface_texture.present();
+        self.queue.present(surface_texture);
     }
 }
 

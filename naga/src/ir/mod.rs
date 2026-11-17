@@ -236,6 +236,7 @@ use crate::diagnostic_filter::DiagnosticFilterNode;
 use crate::{FastIndexMap, NamedExpressions};
 
 pub use block::Block;
+pub use naga_types::{ResourceBinding, ShaderStage};
 
 /// Explicitly allows early depth/stencil tests.
 ///
@@ -315,40 +316,6 @@ pub enum ConservativeDepth {
     Unchanged,
 }
 
-/// Stage of the programmable pipeline.
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum ShaderStage {
-    /// A vertex shader, in a render pipeline.
-    Vertex,
-
-    /// A task shader, in a mesh render pipeline.
-    Task,
-
-    /// A mesh shader, in a mesh render pipeline.
-    Mesh,
-
-    /// A fragment shader, in a render pipeline.
-    Fragment,
-
-    /// Compute pipeline shader.
-    Compute,
-
-    /// A ray generation shader, in a ray tracing pipeline.
-    RayGeneration,
-
-    /// A miss shader, in a ray tracing pipeline.
-    Miss,
-
-    /// A any hit shader, in a ray tracing pipeline.
-    AnyHit,
-
-    /// A closest hit shader, in a ray tracing pipeline.
-    ClosestHit,
-}
-
 /// Addressing space of variables.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -416,7 +383,7 @@ pub enum BuiltIn {
     /// Read in vertex shaders
     BaseVertex,
     /// Written in vertex & mesh shaders
-    ClipDistance,
+    ClipDistances,
     /// Written in vertex & mesh shaders
     CullDistance,
     /// Read in vertex, any- and closest-hit shaders
@@ -1062,6 +1029,8 @@ pub enum Literal {
     F32(f32),
     /// May not be NaN or infinity.
     F16(f16),
+    U16(u16),
+    I16(i16),
     U32(u32),
     I32(i32),
     U64(u64),
@@ -1157,18 +1126,6 @@ pub enum Binding {
         /// non-interpolated normal vector.
         per_primitive: bool,
     },
-}
-
-/// Pipeline binding information for global resources.
-#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub struct ResourceBinding {
-    /// The bind group index.
-    pub group: u32,
-    /// Binding number within the group.
-    pub binding: u32,
 }
 
 /// Variable defined at module level.
@@ -1579,7 +1536,7 @@ bitflags::bitflags! {
     pub struct Barrier: u32 {
         /// Barrier affects all [`AddressSpace::Storage`] accesses.
         const STORAGE = 1 << 0;
-        /// Barrier affects all [`AddressSpace::WorkGroup`] accesses.
+        /// Barrier affects all [`AddressSpace::WorkGroup`] and [`AddressSpace::TaskPayload`] accesses.
         const WORK_GROUP = 1 << 1;
         /// Barrier synchronizes execution across all invocations within a subgroup that execute this instruction.
         const SUB_GROUP = 1 << 2;

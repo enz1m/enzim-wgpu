@@ -146,6 +146,7 @@ it works for our purposes.
 mod conv;
 mod help;
 mod keywords;
+mod mesh_shader;
 mod ray;
 mod storage;
 mod writer;
@@ -155,7 +156,10 @@ use core::fmt::Error as FmtError;
 
 use thiserror::Error;
 
-use crate::{back, ir, proc};
+use crate::{
+    back::{self, TaskDispatchLimits},
+    ir, proc, Handle,
+};
 
 /// Direct3D 12 binding information for a global variable.
 ///
@@ -279,16 +283,17 @@ impl ShaderModel {
     }
 }
 
-impl crate::ShaderStage {
-    pub const fn to_hlsl_str(self) -> &'static str {
-        match self {
-            Self::Vertex => "vs",
-            Self::Fragment => "ps",
-            Self::Compute => "cs",
-            Self::Task => "as",
-            Self::Mesh => "ms",
-            Self::RayGeneration | Self::AnyHit | Self::ClosestHit | Self::Miss => "lib",
-        }
+pub const fn shader_stage_to_hlsl_str(st: nt::ShaderStage) -> &'static str {
+    match st {
+        nt::ShaderStage::Vertex => "vs",
+        nt::ShaderStage::Fragment => "ps",
+        nt::ShaderStage::Compute => "cs",
+        nt::ShaderStage::Task => "as",
+        nt::ShaderStage::Mesh => "ms",
+        nt::ShaderStage::RayGeneration
+        | nt::ShaderStage::AnyHit
+        | nt::ShaderStage::ClosestHit
+        | nt::ShaderStage::Miss => "lib",
     }
 }
 
@@ -543,6 +548,17 @@ pub struct Options {
     /// If set, loops will have code injected into them, forcing the compiler
     /// to think the number of iterations is bounded.
     pub force_loop_bounding: bool,
+
+    /// Limits to the mesh shader dispatch group a task workgroup can dispatch.
+    ///
+    /// Metal for example limits to 1024 workgroups per task shader dispatch. Dispatching more is
+    /// undefined behavior, so this would validate that to dispatch zero workgroups.
+    pub task_dispatch_limits: Option<TaskDispatchLimits>,
+
+    /// If true, naga may generate checks that the primitive indices are valid in the output.
+    ///
+    /// Currently this validation is unimplemented.
+    pub mesh_shader_primitive_indices_clamp: bool,
     /// if set, ray queries will get a variable to track their state to prevent
     /// misuse.
     pub ray_query_initialization_tracking: bool,
@@ -563,6 +579,8 @@ impl Default for Options {
             zero_initialize_workgroup_memory: true,
             restrict_indexing: true,
             force_loop_bounding: true,
+            task_dispatch_limits: None,
+            mesh_shader_primitive_indices_clamp: true,
             ray_query_initialization_tracking: true,
         }
     }
@@ -611,7 +629,7 @@ impl Options {
 }
 
 /// Reflection info for entry point names.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ReflectionInfo {
     /// Mapping of the entry point names.
     ///
@@ -702,6 +720,7 @@ impl Wrapped {
 /// If this is provided, vertex outputs will be removed if they are not inputs of this fragment
 /// entry point. This is necessary for generating correct HLSL when some of the vertex shader
 /// outputs are not consumed by the fragment shader.
+#[derive(Debug)]
 pub struct FragmentEntryPoint<'a> {
     module: &'a crate::Module,
     func: &'a crate::Function,
@@ -723,6 +742,7 @@ impl<'a> FragmentEntryPoint<'a> {
     }
 }
 
+#[expect(missing_debug_implementations, reason = "would be way too verbose?")]
 pub struct Writer<'a, W> {
     out: W,
     names: crate::FastHashMap<proc::NameKey, String>,
@@ -759,6 +779,9 @@ pub struct Writer<'a, W> {
     /// [`AccessIndex`]: crate::Expression::AccessIndex
     temp_access_chain: Vec<storage::SubAccess>,
     need_bake_expressions: back::NeedBakeExpressions,
+
+    function_task_payload_var:
+        crate::FastHashMap<Handle<crate::Function>, Handle<crate::GlobalVariable>>,
 }
 
 pub fn supported_capabilities() -> crate::valid::Capabilities {
@@ -771,7 +794,7 @@ pub fn supported_capabilities() -> crate::valid::Capabilities {
         | Caps::STORAGE_TEXTURE_BINDING_ARRAY
         // No STORAGE_BUFFER_BINDING_ARRAY
         | Caps::ACCELERATION_STRUCTURE_BINDING_ARRAY
-        // No CLIP_DISTANCE
+        // No CLIP_DISTANCES
         // No CULL_DISTANCE
         | Caps::STORAGE_TEXTURE_16BIT_NORM_FORMATS
         | Caps::MULTIVIEW
@@ -791,17 +814,18 @@ pub fn supported_capabilities() -> crate::valid::Capabilities {
         | Caps::TEXTURE_INT64_ATOMIC
         // No RAY_HIT_VERTEX_POSITION
         | Caps::SHADER_FLOAT16
+        | Caps::SHADER_INT16
         | Caps::TEXTURE_EXTERNAL
         | Caps::SHADER_FLOAT16_IN_FLOAT32
         | Caps::SHADER_BARYCENTRICS
-        // No MESH_SHADER
+        | Caps::MESH_SHADER
         // No MESH_SHADER_POINT_TOPOLOGY
         | Caps::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
         // No BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
         | Caps::STORAGE_TEXTURE_BINDING_ARRAY_NON_UNIFORM_INDEXING
         | Caps::STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
         // No COOPERATIVE_MATRIX
-        // No PER_VERTEX
+        | Caps::PER_VERTEX
         // No RAY_TRACING_PIPELINE
         // No DRAW_INDEX
         // No MEMORY_DECORATION_VOLATILE

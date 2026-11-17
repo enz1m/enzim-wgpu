@@ -67,8 +67,16 @@ static BINDING_ARRAY_STORAGE_BUFFERS: GpuTestConfiguration = GpuTestConfiguratio
             max_binding_array_elements_per_shader_stage: 17,
             ..Limits::default()
         },
-        // See https://github.com/gfx-rs/wgpu/issues/6745.
-        failures: FailureCase::mac_vulkan(|case| case.panic("bad SPIR-V wrapper struct inference")),
+        // Metal: https://github.com/gfx-rs/wgpu/issues/9849
+        // MoltenVK: #9849 and also https://github.com/gfx-rs/wgpu/issues/6745
+        // With #6745 only, the expected failure was `case.panic("bad SPIR-V wrapper struct inference")`
+        failures: FailureCase::mac_vulkan(|case| {
+            case.validation_error("Shader library compile failed")
+                .validation_error("could not be compiled into pipeline")
+        })
+        .into_iter()
+        .chain([FailureCase::backend(Backends::METAL)])
+        .collect(),
         ..Default::default()
     })
     .run_async(|ctx| async move { binding_array_buffers(ctx, BufferType::Storage, false).await });
@@ -85,8 +93,16 @@ static PARTIAL_BINDING_ARRAY_STORAGE_BUFFERS: GpuTestConfiguration = GpuTestConf
             max_binding_array_elements_per_shader_stage: 33,
             ..Limits::default()
         },
-        // See https://github.com/gfx-rs/wgpu/issues/6745.
-        failures: FailureCase::mac_vulkan(|case| case.panic("bad SPIR-V wrapper struct inference")),
+        // Metal: https://github.com/gfx-rs/wgpu/issues/9849
+        // MoltenVK: #9849 and also https://github.com/gfx-rs/wgpu/issues/6745
+        // With #6745 only, the expected failure was `case.panic("bad SPIR-V wrapper struct inference")`
+        failures: FailureCase::mac_vulkan(|case| {
+            case.validation_error("Shader library compile failed")
+                .validation_error("could not be compiled into pipeline")
+        })
+        .into_iter()
+        .chain([FailureCase::backend(Backends::METAL)])
+        .collect(),
         ..Default::default()
     })
     .run_async(|ctx| async move { binding_array_buffers(ctx, BufferType::Storage, true).await });
@@ -107,6 +123,7 @@ async fn binding_array_buffers(
     };
 
     let shader = r#"
+        enable wgpu_binding_array;
         struct ImAU32 {
             value: u32,
             _padding: u32,
@@ -156,6 +173,7 @@ async fn binding_array_buffers(
         });
         buffer
             .get_mapped_range_mut(..)
+            .unwrap()
             .slice(0..4)
             .copy_from_slice(&data.0);
         buffer.unmap();
@@ -270,7 +288,7 @@ async fn binding_array_buffers(
 
     ctx.device.poll(PollType::wait_indefinitely()).unwrap();
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().unwrap();
 
     assert_eq!(&data[..], &*image);
 }

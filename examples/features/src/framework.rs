@@ -53,7 +53,7 @@ pub trait Example: 'static + Sized {
     fn render(&mut self, view: &wgpu::TextureView, device: &wgpu::Device, queue: &wgpu::Queue);
 }
 
-// Initialize logging in platform dependant ways.
+// Initialize logging in platform dependent ways.
 fn init_logger() {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
@@ -197,7 +197,16 @@ impl SurfaceWrapper {
             // If we timed out or the window is occluded, skip this frame:
             CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => None,
             // If the surface is outdated or suboptimal, reconfigure and retry.
-            CurrentSurfaceTexture::Suboptimal(_) | CurrentSurfaceTexture::Outdated => {
+            CurrentSurfaceTexture::Suboptimal(texture) => {
+                drop(texture);
+                surface.configure(&context.device, self.config());
+                match surface.get_current_texture() {
+                    CurrentSurfaceTexture::Success(frame)
+                    | CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+                    other => panic!("Failed to acquire next surface texture: {other:?}"),
+                }
+            }
+            CurrentSurfaceTexture::Outdated => {
                 surface.configure(&context.device, self.config());
                 match surface.get_current_texture() {
                     CurrentSurfaceTexture::Success(frame)
@@ -548,9 +557,12 @@ impl<E: Example> ApplicationHandler<AppAction> for App<E> {
                     if let Some(window) = &self.window {
                         window.pre_present_notify();
                     }
-                    frame.present();
+                    context.queue.present(frame);
                 }
 
+                // Request another redraw to keep the animation loop running.
+                // Examples that only render once (like hello_triangle) omit
+                // this call so the event loop can rest between frames.
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -688,9 +700,11 @@ impl<E: Example + wgpu::WasmNotSendSync> From<ExampleTestParams<E>>
                     &wgpu::SurfaceConfiguration {
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         format,
+                        color_space: wgpu::SurfaceColorSpace::Auto,
                         width: params.width,
                         height: params.height,
                         desired_maximum_frame_latency: 2,
+                        // Fifo corresponds to traditional VSync. It's supported everywhere.
                         present_mode: wgpu::PresentMode::Fifo,
                         alpha_mode: wgpu::CompositeAlphaMode::Auto,
                         view_formats: vec![format],
@@ -735,7 +749,7 @@ impl<E: Example + wgpu::WasmNotSendSync> From<ExampleTestParams<E>>
                 ctx.async_poll(wgpu::PollType::wait_indefinitely())
                     .await
                     .unwrap();
-                let bytes = dst_buffer_slice.get_mapped_range().to_vec();
+                let bytes = dst_buffer_slice.get_mapped_range().unwrap().to_vec();
 
                 wgpu_test::image::compare_image_output(
                     dbg!(env!("CARGO_MANIFEST_DIR").to_string() + "/../../" + params.image_path),

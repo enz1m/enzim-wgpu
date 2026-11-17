@@ -2,7 +2,7 @@ use std::num::NonZero;
 
 use wgpu::{Features, Limits};
 use wgpu_test::{
-    gpu_test, GpuTestConfiguration, GpuTestInitializer, TestParameters, TestingContext,
+    gpu_test, FailureCase, GpuTestConfiguration, GpuTestInitializer, TestParameters, TestingContext,
 };
 
 pub fn all_tests(vec: &mut Vec<GpuTestInitializer>) {
@@ -44,12 +44,22 @@ static DRAW_MULTIVIEW_NONCONTIGUOUS: GpuTestConfiguration = GpuTestConfiguration
             max_multiview_view_count: 4,
             ..Limits::defaults()
         },
-        // https://github.com/gfx-rs/wgpu/issues/9184 and https://github.com/gfx-rs/wgpu/issues/9187
-        failures: wgpu_test::FailureCase::mac_vulkan(|case| {
-            case.panic(
-                "assertion `left == right` failed: Expected 0\n  left: Some(255)\n right: None",
-            )
-        }),
+        failures: {
+            let mut failures = Vec::new();
+            // https://github.com/gfx-rs/wgpu/issues/9620
+            failures.push(FailureCase::lvp_poison_memory(
+                "assertion `left == right` failed: Expected 0\n  \
+                 left: Some(128)\n \
+                 right: None",
+            ));
+            // https://github.com/gfx-rs/wgpu/issues/9184 and https://github.com/gfx-rs/wgpu/issues/9187
+            failures.append(&mut FailureCase::mac_vulkan(|case| {
+                case.panic(
+                    "assertion `left == right` failed: Expected 0\n  left: Some(255)\n right: None",
+                )
+            }));
+            failures
+        },
         ..Default::default()
     })
     .run_async(|ctx| run_test(ctx, 0b1001, 1));
@@ -212,7 +222,7 @@ async fn run_test(ctx: TestingContext, layer_mask: u32, sample_count: u32) {
         .await
         .unwrap();
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().unwrap();
     let each_texture_size = (TEXTURE_SIZE * TEXTURE_SIZE) as usize;
     assert_eq!(data.len(), each_texture_size * num_layers as usize);
     for view_idx in 0..num_layers as usize {

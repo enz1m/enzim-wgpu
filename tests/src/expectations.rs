@@ -171,6 +171,19 @@ impl FailureCase {
         vec![f(FailureCase::molten_vk()), f(FailureCase::kosmic_krisp())]
     }
 
+    pub fn lvp_poison_memory(message: &'static str) -> Self {
+        if let Ok("true") = std::env::var("LVP_POISON_MEMORY").as_deref() {
+            FailureCase {
+                backends: Some(wgpu::Backends::VULKAN),
+                driver: Some("llvmpipe"),
+                reasons: vec![FailureReason::panic().with_message(message)],
+                ..FailureCase::default()
+            }
+        } else {
+            FailureCase::never()
+        }
+    }
+
     /// Return the reasons why this case should fail.
     pub fn reasons(&self) -> &[FailureReason] {
         if self.reasons.is_empty() {
@@ -198,6 +211,23 @@ impl FailureCase {
     /// If multiple reasons are pushed, will match any of them.
     pub fn panic(mut self, msg: &'static str) -> Self {
         self.reasons.push(FailureReason::panic().with_message(msg));
+        self
+    }
+
+    /// Matches this failure case against an unexpected driver error.
+    ///
+    /// Depending on build configuration, the error may surface as either a
+    /// panic raised by the `internal_error_panic` feature (with the supplied
+    /// message as a substring), or as a device-loss. Either behavior is
+    /// accepted. In the device loss case, the original message has been
+    /// discarded, and there is some risk this accepts a different error than
+    /// intended (but it must be a device loss due to an unexpected driver
+    /// error, which should be rare).
+    pub fn unexpected_error(mut self, msg: &'static str) -> Self {
+        self.reasons.push(FailureReason::panic().with_message(msg));
+        self.reasons.push(FailureReason::panic().with_message(
+            "Device lost: Unexpected error variant (driver implementation is at fault)",
+        ));
         self
     }
 
@@ -319,7 +349,7 @@ impl FailureReason {
     };
 
     /// Match a validation error.
-    #[allow(dead_code)] // Not constructed on wasm
+    #[allow(dead_code, reason = "Not constructed on wasm")]
     pub fn validation_error() -> Self {
         Self {
             kind: Some(FailureResultKind::ValidationError),
@@ -364,7 +394,7 @@ pub enum FailureBehavior {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FailureResultKind {
-    #[allow(dead_code)] // Not constructed on wasm
+    #[allow(dead_code, reason = "Not constructed on wasm")]
     ValidationError,
     Panic,
 }
@@ -394,7 +424,7 @@ impl FailureResult {
     }
 
     /// Failure result is a validation error.
-    #[allow(dead_code)] // Not constructed on wasm
+    #[allow(dead_code, reason = "Not constructed on wasm")]
     pub(super) fn validation_error() -> Self {
         Self {
             kind: FailureResultKind::ValidationError,

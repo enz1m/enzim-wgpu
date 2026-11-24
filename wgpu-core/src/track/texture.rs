@@ -478,6 +478,11 @@ impl TextureTracker {
     pub fn used_resources(&self) -> impl Iterator<Item = &Arc<Texture>> + '_ {
         self.metadata.owned_resources()
     }
+
+    pub fn has_pending_transitions(&self) -> bool {
+        !self.temp.is_empty()
+    }
+
     /// Drain all currently pending transitions.
     pub fn drain_transitions<'a>(
         &'a mut self,

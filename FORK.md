@@ -13,7 +13,7 @@
 
 The `enzim` branch starts at the exact upstream commit recorded in the nine
 crate archives consumed by enzUI. Upstream ancestry is retained unchanged.
-Each of the four fork patches is recorded in an independent, signed commit.
+Each fork patch is recorded in an independent, signed commit.
 Upstream releases are merged in (most recently `v30.0.2`), never rebased,
 so published history is not rewritten.
 
@@ -51,6 +51,15 @@ function/private composites omit those decorations. Nested memory-interface
 layouts and existing std140 wrappers retain their explicit decorations.
 Types shared between memory interfaces and function variables are not split
 into separate SPIR-V types by this patch.
+
+## Fork changes
+
+### Render-pass transit buffers
+
+`wgpu-core/src/command/render.rs` begins the internal "Pre Pass" command
+buffer only when a render pass needs barriers, discard fixups, query resets
+or indirect-draw validation. Beginning a command buffer zeroes about 60 KB of
+state on Mesa ANV, so a frame's first pass usually skips that cost.
 
 ## Import audit
 

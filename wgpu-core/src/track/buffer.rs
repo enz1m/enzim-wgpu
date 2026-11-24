@@ -337,6 +337,10 @@ impl BufferTracker {
         self.metadata.owned_resources()
     }
 
+    pub fn has_pending_transitions(&self) -> bool {
+        !self.temp.is_empty()
+    }
+
     /// Drains all currently pending transitions.
     pub fn drain_transitions<'a, 'b: 'a>(
         &'b mut self,

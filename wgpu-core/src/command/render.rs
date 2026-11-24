@@ -2720,6 +2720,27 @@ pub(super) fn encode_render_pass(
     let encoder = &mut parent_state.raw_encoder;
     let tracker = &mut parent_state.tracker;
 
+    if pending_discard_init_fixups.is_empty()
+        && pending_query_resets.is_empty()
+        && indirect_draw_validation_batcher.is_empty()
+    {
+        tracker.buffers.set_from_usage_scope(&scope.buffers);
+        tracker.textures.set_from_usage_scope(&scope.textures);
+        // Beginning a command buffer is costly on some drivers, so a pass that
+        // needs no barriers gets no transit command buffer.
+        if tracker.buffers.has_pending_transitions() || tracker.textures.has_pending_transitions() {
+            let transit = encoder
+                .open_pass(hal_label(
+                    Some("(wgpu internal) Pre Pass"),
+                    device.instance_flags,
+                ))
+                .map_pass_err(pass_scope)?;
+            CommandEncoder::drain_barriers(transit, tracker, parent_state.snatch_guard);
+            encoder.close_and_swap().map_pass_err(pass_scope)?;
+        }
+        return Ok(());
+    }
+
     {
         let transit = encoder
             .open_pass(hal_label(

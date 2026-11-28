@@ -226,6 +226,7 @@ impl Surface {
 
                 let mut presentation = self.presentation.lock();
                 let present = presentation.as_mut().unwrap();
+                let contents_preserved = ast.texture.contents_preserved();
                 let texture = resource::Texture::new(
                     &device,
                     resource::TextureInner::Surface { raw: ast.texture },
@@ -235,16 +236,20 @@ impl Surface {
                     resource::TextureClearMode::Surface {
                         clear_view: ManuallyDrop::new(clear_view),
                     },
-                    true,
+                    !contents_preserved,
                 );
 
                 let texture = Arc::new(texture);
-
+                let usage = if contents_preserved {
+                    wgt::TextureUses::PRESENT
+                } else {
+                    wgt::TextureUses::UNINITIALIZED
+                };
                 device
                     .trackers
                     .lock()
                     .textures
-                    .insert_single(&texture, wgt::TextureUses::UNINITIALIZED);
+                    .insert_single(&texture, usage);
 
                 if present.acquired_texture.is_some() {
                     return Err(SurfaceError::AlreadyAcquired);

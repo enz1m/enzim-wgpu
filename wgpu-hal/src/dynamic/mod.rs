@@ -112,6 +112,10 @@ pub trait DynShaderModule: DynResource + fmt::Debug {}
 pub trait DynSurfaceTexture:
     DynResource + core::borrow::Borrow<dyn DynTexture> + fmt::Debug
 {
+    /// Whether all subresources retain initialized contents in the present layout.
+    fn contents_preserved(&self) -> bool {
+        false
+    }
 }
 pub trait DynTexture: DynResource + fmt::Debug {}
 pub trait DynTextureView: DynResource + fmt::Debug {}

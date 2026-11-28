@@ -223,6 +223,24 @@ pub struct Surface {
 }
 
 impl Surface {
+    /// Requests preserved contents on qualified Wayland swapchains configured for copies.
+    ///
+    /// The request takes effect at the next swapchain configuration.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclusively manage this Wayland window through Vulkan
+    /// WSI and serialize image acquisition and presentation for it.
+    pub unsafe fn request_preserved_contents(&self) {
+        if let Some(surface) = self
+            .inner
+            .as_any()
+            .downcast_ref::<swapchain::NativeSurface>()
+        {
+            surface.request_preserved_contents();
+        }
+    }
+
     /// Returns the raw Vulkan surface handle.
     ///
     /// Returns `None` if the surface is a DXGI surface.
@@ -286,7 +304,24 @@ pub struct SurfaceTexture {
     metadata: Box<dyn swapchain::SurfaceTextureMetadata>,
 }
 
-impl crate::DynSurfaceTexture for SurfaceTexture {}
+impl crate::DynSurfaceTexture for SurfaceTexture {
+    fn contents_preserved(&self) -> bool {
+        self.texture
+            .surface_frame
+            .is_some_and(|frame| frame.previous_serial.is_some())
+    }
+}
+
+/// Identifies the content of an acquired image on an opted-in native swapchain.
+#[derive(Clone, Copy, Debug)]
+pub struct PreservedSurfaceFrame {
+    /// Unique across swapchain configurations in this process.
+    pub generation: u64,
+    /// Serial assigned to the next present attempt.
+    pub serial: u64,
+    /// Last successful present of this image, if its contents are defined.
+    pub previous_serial: Option<u64>,
+}
 
 impl Borrow<Texture> for SurfaceTexture {
     fn borrow(&self) -> &Texture {
@@ -514,6 +549,7 @@ struct DeviceShared {
     enabled_extensions: Vec<&'static CStr>,
     extension_fns: DeviceExtensionFunctions,
     vendor_id: u32,
+    driver_id: Option<vk::DriverId>,
     pipeline_cache_validation_key: [u8; 16],
     timestamp_period: f32,
     private_caps: PrivateCapabilities,
@@ -822,6 +858,7 @@ pub struct Texture {
     format: wgt::TextureFormat,
     copy_size: crate::CopyExtent,
     identity: ResourceIdentity<vk::Image>,
+    surface_frame: Option<PreservedSurfaceFrame>,
 
     // The `drop_guard` field must be the last field of this struct so it is dropped last.
     // Do not add new fields after it.
@@ -831,6 +868,11 @@ pub struct Texture {
 impl crate::DynTexture for Texture {}
 
 impl Texture {
+    /// Returns the presentation serials for this acquired image, if tracked.
+    pub fn preserved_surface_frame(&self) -> Option<PreservedSurfaceFrame> {
+        self.surface_frame
+    }
+
     /// # Safety
     ///
     /// - The image handle must not be manually destroyed

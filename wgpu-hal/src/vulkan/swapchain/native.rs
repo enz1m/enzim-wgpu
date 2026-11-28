@@ -2,7 +2,10 @@
 //! Vulkan Surface and Swapchain implementation using native Vulkan surfaces.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::any::Any;
+use core::{
+    any::Any,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 use ash::{khr, vk};
 use parking_lot::{Mutex, MutexGuard};
@@ -26,6 +29,8 @@ pub(crate) struct NativeSurface {
     /// asks on every configure, so a window resizing each frame waited on
     /// the compositor nine times a frame.
     capabilities: Mutex<Option<(vk::PhysicalDevice, crate::SurfaceCapabilities)>>,
+    wayland: bool,
+    preserve_contents: AtomicBool,
     /// Built from the window's `HWND` (Windows only) to answer the display-HDR
     /// query; `None` for non-Win32 surfaces.
     #[cfg(windows)]
@@ -37,6 +42,7 @@ impl NativeSurface {
         instance: &crate::vulkan::Instance,
         raw: vk::SurfaceKHR,
         hwnd: Option<WindowHandle>,
+        wayland: bool,
     ) -> Self {
         #[cfg(not(windows))]
         let _ = hwnd;
@@ -46,9 +52,15 @@ impl NativeSurface {
             functor,
             instance: Arc::clone(&instance.shared),
             capabilities: Mutex::new(None),
+            wayland,
+            preserve_contents: AtomicBool::new(false),
             #[cfg(windows)]
             hdr_source: hwnd.map(|wh| crate::auxil::dxgi::hdr::DxgiHdrSource::new(wh.0)),
         }
+    }
+
+    pub(crate) fn request_preserved_contents(&self) {
+        self.preserve_contents.store(true, Ordering::Relaxed);
     }
 
     pub fn as_raw(&self) -> vk::SurfaceKHR {
@@ -254,6 +266,8 @@ impl NativeSurface {
             raw_view_formats.push(original_format);
         }
 
+        let preserve_contents = self.preserve_contents.load(Ordering::Relaxed)
+            && supports_preserved_contents(self.wayland, device.shared.driver_id, config.usage);
         let mut info = vk::SwapchainCreateInfoKHR::default()
             .flags(raw_flags)
             .surface(self.raw)
@@ -270,7 +284,8 @@ impl NativeSurface {
             .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
             .composite_alpha(conv::map_composite_alpha_mode(config.composite_alpha_mode))
             .present_mode(conv::map_present_mode(config.present_mode))
-            .clipped(true)
+            // Vulkan leaves clipped pixels undefined on reacquisition.
+            .clipped(!preserve_contents)
             .old_swapchain(old_swapchain);
 
         let mut format_list_info = vk::ImageFormatListCreateInfo::default();
@@ -334,6 +349,13 @@ impl NativeSurface {
             .map(|i| Arc::new(Mutex::new(SwapchainPresentSemaphores::new(i))))
             .collect::<Vec<_>>();
 
+        static NEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
+        let preservation = preserve_contents.then(|| PreservedImages {
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            next_serial: 1,
+            last_presented: alloc::vec![None; images.len()],
+        });
+
         Ok(Box::new(NativeSwapchain {
             raw,
             functor,
@@ -345,8 +367,28 @@ impl NativeSurface {
             next_acquire_index: 0,
             present_semaphores,
             next_present_time: None,
+            preservation,
         }))
     }
+}
+
+fn supports_preserved_contents(
+    wayland: bool,
+    driver_id: Option<vk::DriverId>,
+    usage: wgt::TextureUses,
+) -> bool {
+    wayland
+        && usage.contains(wgt::TextureUses::COPY_DST)
+        && matches!(
+            driver_id,
+            Some(vk::DriverId::INTEL_OPEN_SOURCE_MESA | vk::DriverId::NVIDIA_PROPRIETARY)
+        )
+}
+
+struct PreservedImages {
+    generation: u64,
+    next_serial: u64,
+    last_presented: Vec<Option<u64>>,
 }
 
 pub(crate) struct NativeSwapchain {
@@ -354,6 +396,7 @@ pub(crate) struct NativeSwapchain {
     functor: khr::swapchain::Device,
     device: Arc<DeviceShared>,
     images: Vec<vk::Image>,
+    preservation: Option<PreservedImages>,
     /// Fence used to wait on the acquired image.
     fence: Option<vk::Fence>,
     config: crate::SurfaceConfiguration,
@@ -522,6 +565,13 @@ impl Swapchain for NativeSwapchain {
             #[cfg(not(target_os = "android"))]
             Ok(pair) => pair,
             Err(error) => {
+                if let Some(images) = self
+                    .preservation
+                    .as_mut()
+                    .filter(|_| error != vk::Result::TIMEOUT)
+                {
+                    images.last_presented.fill(None);
+                }
                 return match error {
                     vk::Result::TIMEOUT => Err(crate::SurfaceError::Timeout),
                     vk::Result::NOT_READY | vk::Result::ERROR_OUT_OF_DATE_KHR => {
@@ -563,6 +613,16 @@ impl Swapchain for NativeSwapchain {
         }
 
         let identity = self.device.texture_identity_factory.next();
+        let surface_frame = self.preservation.as_mut().map(|images| {
+            if suboptimal {
+                images.last_presented.fill(None);
+            }
+            super::super::PreservedSurfaceFrame {
+                generation: images.generation,
+                serial: images.next_serial,
+                previous_serial: images.last_presented[index as usize].take(),
+            }
+        });
 
         let texture = crate::vulkan::SurfaceTexture {
             index,
@@ -577,6 +637,7 @@ impl Swapchain for NativeSwapchain {
                     depth: 1,
                 },
                 identity,
+                surface_frame,
             },
             metadata: Box::new(NativeSurfaceTextureMetadata {
                 acquire_semaphores: acquire_semaphore_arc,
@@ -593,6 +654,9 @@ impl Swapchain for NativeSwapchain {
         &mut self,
         _texture: crate::vulkan::SurfaceTexture,
     ) -> Result<(), crate::SurfaceError> {
+        if let Some(images) = &mut self.preservation {
+            images.last_presented.fill(None);
+        }
         // TODO: Current implementation no-ops
         Ok(())
     }
@@ -651,9 +715,15 @@ impl Swapchain for NativeSwapchain {
         // say so. An empty list still names one pixel: an empty region would
         // read as the whole image.
         let damage = super::take_present_damage().filter(|_| {
-            self.device
-                .enabled_extensions
-                .contains(&khr::incremental_present::NAME)
+            let known = texture
+                .texture
+                .surface_frame
+                .is_none_or(|frame| frame.previous_serial.is_some());
+            known
+                && self
+                    .device
+                    .enabled_extensions
+                    .contains(&khr::incremental_present::NAME)
         });
         let rectangles: Vec<vk::RectLayerKHR> = damage
             .iter()
@@ -699,9 +769,17 @@ impl Swapchain for NativeSwapchain {
                     // VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT
                     _ => map_host_device_oom_and_lost_err(error).into(),
                 }
-            })?
+            })
         };
-        if suboptimal {
+        if let Some(images) = &mut self.preservation {
+            if matches!(suboptimal, Ok(false)) {
+                images.last_presented[texture.index as usize] = Some(images.next_serial);
+            } else {
+                images.last_presented.fill(None);
+            }
+            images.next_serial += 1;
+        }
+        if suboptimal? {
             // We treat `VK_SUBOPTIMAL_KHR` as `VK_SUCCESS` on Android.
             // On Android 10+, libvulkan's `vkQueuePresentKHR` implementation returns `VK_SUBOPTIMAL_KHR` if not doing pre-rotation
             // (i.e `VkSwapchainCreateInfoKHR::preTransform` not being equal to the current device orientation).
@@ -1012,5 +1090,50 @@ impl<'a> SwapchainSubmissionSemaphoreGuard for NativeSwapchainSubmissionSemaphor
         self.present_semaphores_guard
             .get_submit_signal_semaphore(device)
             .map(SemaphoreType::Binary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserved_contents_require_qualified_wayland_driver_and_copy_dst() {
+        use vk::DriverId;
+        use wgt::TextureUses;
+
+        for driver in [
+            DriverId::INTEL_OPEN_SOURCE_MESA,
+            DriverId::NVIDIA_PROPRIETARY,
+        ] {
+            assert!(supports_preserved_contents(
+                true,
+                Some(driver),
+                TextureUses::COPY_DST
+            ));
+            assert!(!supports_preserved_contents(
+                false,
+                Some(driver),
+                TextureUses::COPY_DST
+            ));
+            assert!(!supports_preserved_contents(
+                true,
+                Some(driver),
+                TextureUses::COLOR_TARGET
+            ));
+        }
+
+        for driver in [
+            None,
+            Some(DriverId::MESA_RADV),
+            Some(DriverId::MESA_NVK),
+            Some(DriverId::MESA_LLVMPIPE),
+        ] {
+            assert!(!supports_preserved_contents(
+                true,
+                driver,
+                TextureUses::COPY_DST
+            ));
+        }
     }
 }

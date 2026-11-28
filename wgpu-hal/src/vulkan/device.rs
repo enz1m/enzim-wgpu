@@ -315,6 +315,7 @@ impl super::Device {
             format: desc.format,
             copy_size: desc.copy_extent(),
             identity,
+            surface_frame: None,
         }
     }
 

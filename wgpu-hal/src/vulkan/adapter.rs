@@ -2927,6 +2927,7 @@ impl super::Adapter {
             },
             pipeline_cache_validation_key,
             vendor_id: self.phd_capabilities.properties.vendor_id,
+            driver_id: self.phd_capabilities.driver.map(|driver| driver.driver_id),
             timestamp_period: self.phd_capabilities.properties.limits.timestamp_period,
             private_caps: self.private_caps.clone(),
             features,

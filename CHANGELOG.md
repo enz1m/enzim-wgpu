@@ -44,6 +44,8 @@ Bottom level categories:
 
 ### enzUI fork
 
+- Allow native callers to request Wayland swapchain image preservation on Intel Mesa and NVIDIA proprietary Vulkan drivers.
+
 - Avoid whole-pool Vulkan command-buffer resets when reusing completed buffers.
 - Cache capabilities for Vulkan surfaces whose extent follows the swapchain.
 - Add `wgpu_hal::vulkan::set_present_damage` for incremental presentation hints.
